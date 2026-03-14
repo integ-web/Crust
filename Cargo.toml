@@ -1,0 +1,25 @@
+[workspace]
+members = [
+    "brain",
+    "cli",
+    "engine",
+    "graph_db",
+    "interface",
+    "kernel",
+    "memory",
+    "orchestrator",
+    "scraper",
+    "senses",
+]
+resolver = "2"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+sysinfo = "0.30"
+nvml-wrapper = "0.10"

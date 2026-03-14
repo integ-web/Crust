@@ -1,0 +1,13 @@
+[package]
+name = "kernel"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sysinfo = { workspace = true }
+nvml-wrapper = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
