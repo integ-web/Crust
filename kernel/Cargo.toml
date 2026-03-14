@@ -13,3 +13,8 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 wasmtime = "17.0"
 wat = "1.0"
+# Use rusqlite instead of sqlx to prevent `libsqlite3-sys` version conflict with `graph_db` crate
+rusqlite = { version = "0.38.0", features = ["bundled"] }
+sha2 = "0.10.8"
+hex = "0.4.3"
+tokio = { workspace = true }

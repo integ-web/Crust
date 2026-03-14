@@ -1,228 +1,104 @@
-use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
-use engine::InferenceEngine;
-use env_logger::Env;
-use graph_db::GraphDB;
-use log::{info, warn};
-use orchestrator::Orchestrator;
-use scraper::ToolSynthesizer;
-use std::io::{self, Write};
-use sysinfo::System;
-use serde::Deserialize;
-
-#[derive(Parser)]
-#[command(author, version, about, long_about = None)]
-#[command(propagate_version = true)]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    /// Start a new research query
-    Research {
-        /// The initial query or topic
-        #[arg(short, long)]
-        query: Option<String>,
-
-        /// Time limit in minutes
-        #[arg(short, long, default_value_t = 30)]
-        time_limit: u32,
-    },
-    /// Initialize system and download models (10-minute setup)
-    Init,
-}
+use anyhow::Result;
+use brain::taint::{PrincipalChecker, UntrustedValue, TrustedAction};
+use interface::dispatcher::{DesignDispatcher, OutputFormat};
+use interface::synthesis::SynthesisEngine;
+use kernel::prober::HardwareProber;
+use memory::episodic::EpisodicMemory;
+use memory::semantic::SemanticMemory;
+use orchestrator::orga::OrgaCycle;
+use senses::browser::StealthBrowser;
+use std::time::Duration;
+use tracing::{info, Level};
+use tracing_subscriber::FmtSubscriber;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+    // 0. Initialize System Tracing
+    let subscriber = FmtSubscriber::builder()
+        .with_max_level(Level::INFO)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber)
+        .expect("Setting default subscriber failed");
 
-    let cli = Cli::parse();
+    info!("🚀 Booting Crust-RustyAgent OS Kernel...");
 
-    match &cli.command {
-        Commands::Init => {
-            info!("Running 10-Minute Setup...");
-            setup_environment().await?;
-        }
-        Commands::Research { query, time_limit } => {
-            let actual_query = match query {
-                Some(q) => q.clone(),
-                None => interactive_refine_query()?,
-            };
+    // 1. Session 1: Hardware-Aware Matchmaker & Bootloader
+    let prober = HardwareProber::new();
+    let hw_profile = prober.probe();
+    info!("Hardware Profile Detected: {:?}", hw_profile);
+    info!("Estimated Kernel Speed: {:.2} TPS", hw_profile.speed_estimate_tps);
 
-            info!("Starting deep research on: {}", actual_query);
-            info!("Time limit constraint: {} minutes", time_limit);
+    // 2. Session 4 & 5: Initialize Memory and Durable Event Log
+    let semantic_db = SemanticMemory::new()?;
+    let episodic_log = EpisodicMemory::new("agent_episodic.log");
+    info!("Multi-Tier Memory and Event Logs Initialized.");
 
-            // 1. Initialize dependencies
-            let db_path = "research_memory.db";
-            let graph = GraphDB::new(db_path).context("Failed to initialize Ontology DB")?;
+    // 3. User Input (Sample Research Query)
+    let query = "Personal finance manager for startup founders";
+    info!("User Prompt Recieved: '{}'", query);
 
-            let scraper = ToolSynthesizer::new().context("Failed to initialize Scraper Tools")?;
+    // 4. Session 6: Core Orchestration (ORGA)
+    let mut orga = OrgaCycle::new();
 
-            let engine = InferenceEngine::new("tinyllama.gguf", "tokenizer.json")
-                .context("Failed to initialize Inference Engine. Did you run `cli init`?")?;
+    // In a real run, the ORGA cycle triggers `senses` (StealthBrowser) based on its generated sub-tasks.
+    // For demonstration of the OS integrating the flow, we will manually perform the pipeline:
 
-            let mut orchestrator = Orchestrator::new(engine, graph);
+    // -> Start the ORGA reasoning cycle
+    orga.run_cycle(query).await?;
 
-            let scraper_arc = std::sync::Arc::new(scraper);
-            orchestrator.register_tool(Box::new(orchestrator::web_search_tool::WebSearchTool::new(scraper_arc.clone())));
-            orchestrator.register_tool(Box::new(orchestrator::builtin_tools::ArxivTool::new(scraper_arc.clone())));
-            orchestrator.register_tool(Box::new(orchestrator::builtin_tools::BrowseTool::new(scraper_arc.clone())));
-
-            let result = orchestrator.execute_research(&actual_query).await?;
-            info!("Final Research Result: \n{}", result);
-        }
-    }
-
-    Ok(())
-}
-
-fn interactive_refine_query() -> Result<String> {
-    let mut query = String::new();
-    println!("=== Deep Research Agent Interactive Refining ===");
-    println!("What topic would you like to research? (e.g., 'Find all YC startups doing AI dev tools and extract their leads')");
-    print!("> ");
-    io::stdout().flush()?;
-    io::stdin().read_line(&mut query)?;
-
-    // Stub for interactive refinement:
-    // In a full implementation, the LLM would quickly evaluate the query here and ask
-    // clarifying questions (like target geography, specific sub-niches) before starting.
-    println!("Got it. I will optimize this for the best research path.");
-
-    Ok(query.trim().to_string())
-}
-
-#[derive(Deserialize, Debug)]
-struct HFModel {
-    id: String,
-}
-
-async fn fetch_trending_gguf_models() -> Result<Vec<String>> {
-    let url = "https://huggingface.co/api/models?search=GGUF&filter=text-generation&sort=downloads&direction=-1&limit=20";
-    let client = reqwest::Client::builder().user_agent("RustyAgent/1.0").build()?;
-    let response = client.get(url).send().await?.json::<Vec<HFModel>>().await?;
-    Ok(response.into_iter().map(|m| m.id).collect())
-}
-
-fn determine_model_tier(repo_id: &str, total_ram_gb: f64) -> bool {
-    let id_lower = repo_id.to_lowercase();
-
-    // Extract rough parameter count from name
-    let is_tiny = id_lower.contains("0.5b") || id_lower.contains("1b") || id_lower.contains("1.5b") || id_lower.contains("2b");
-    let is_medium = id_lower.contains("3b") || id_lower.contains("4b");
-    let _is_large = id_lower.contains("7b") || id_lower.contains("8b");
-
-    // Fit to RAM constraint
-    if total_ram_gb < 4.5 {
-        is_tiny // Only allow sub-3B models on 4GB systems
-    } else if total_ram_gb < 12.0 {
-        is_tiny || is_medium // Allow up to 4B on 8GB systems
-    } else {
-        true // Allow anything on 12GB+ systems
-    }
-}
-
-async fn setup_environment() -> Result<()> {
-    println!("=== Hardware Discovery (LLMFit) ===");
-    let mut sys = System::new_all();
-    sys.refresh_all();
-
-    let total_ram_gb = sys.total_memory() as f64 / 1_073_741_824.0;
-    let cpu_cores = sys.cpus().len();
-
-    println!("Detected Hardware:");
-    println!("- RAM: {:.2} GB", total_ram_gb);
-    println!("- CPU: {} logical cores", cpu_cores);
-
-    println!("\n=== Dynamic Model Discovery ===");
-    println!("Scraping HuggingFace for top trending GGUF models that fit your hardware...");
-
-    let all_trending = fetch_trending_gguf_models().await.unwrap_or_else(|_| {
-        warn!("Failed to fetch live models. Falling back to default.");
-        vec!["TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF".to_string()]
-    });
-
-    let viable_models: Vec<String> = all_trending.into_iter()
-        .filter(|id| determine_model_tier(id, total_ram_gb))
-        .take(5)
-        .collect();
-
-    println!("\nFound {} optimal models for your {:.1} GB system:", viable_models.len(), total_ram_gb);
-    for (i, model) in viable_models.iter().enumerate() {
-        println!("{}. {}", i + 1, model);
-    }
-
-    println!("\nEnter the number of the model to download (or press [ENTER] for default #1):");
-    print!("> ");
-    io::stdout().flush()?;
-
-    let mut choice = String::new();
-    io::stdin().read_line(&mut choice)?;
-    let choice = choice.trim();
-
-    let selected_index = if choice.is_empty() {
-        0
-    } else {
-        choice.parse::<usize>().unwrap_or(1).saturating_sub(1)
+    // -> Sense / Scrape (Mocking Adaptive Senses - Session 3)
+    info!("Senses: Launching Stealth Browser to research personal finance tools...");
+    let browser_sim = async {
+        let browser = StealthBrowser::launch().await?;
+        // Normally we navigate here: let page = browser.stealth_page("https://example-startup-finance.com").await?;
+        // browser.human_mouse_move(&page, 0.0, 0.0, 100.0, 100.0).await?;
+        Ok::<&str, anyhow::Error>("Found 'Mint for Startups' and 'Brex'.")
     };
 
-    let selected_repo = viable_models.get(selected_index).unwrap_or(&viable_models[0]);
-    println!("Selected: {}", selected_repo);
-
-    info!("Initializing HuggingFace Hub API...");
-    let api = hf_hub::api::tokio::Api::new()?;
-    let model_repo = api.model(selected_repo.to_string());
-
-    // We scrape the repo files to find the Q4_K_M or Q8_0 weights dynamically
-    let info = model_repo.info().await?;
-    let mut chosen_file = String::new();
-    for file in info.siblings {
-        let rfilename = file.rfilename;
-        if rfilename.ends_with(".gguf") {
-            let fname = rfilename.to_lowercase();
-            // Prefer Q4_K_M for balance of speed and size
-            if fname.contains("q4_k_m") {
-                chosen_file = rfilename.clone();
-                break;
-            } else if fname.contains("q8_0") {
-                chosen_file = rfilename.clone();
-            } else if chosen_file.is_empty() {
-                chosen_file = rfilename;
-            }
+    let raw_findings = match browser_sim.await {
+        Ok(data) => data.to_string(),
+        Err(e) => {
+            tracing::warn!("Browser failed, falling back to cached knowledge: {}", e);
+            "Fallback data: Founder-focused bank accounts with runway calculators.".to_string()
         }
-    }
-
-    if chosen_file.is_empty() {
-        anyhow::bail!("No .gguf files found in repository {}", selected_repo);
-    }
-
-    info!("Downloading optimal weight file ({})...", chosen_file);
-    let model_path = model_repo.get(&chosen_file).await?;
-
-    // Tokenizer is rarely in quantized repos. For an autonomous setup,
-    // we would extract the base model name from config.json.
-    // For this demonstration, we map a few popular base repos, otherwise fallback to TinyLlama base.
-    let base_repo_name = if selected_repo.to_lowercase().contains("llama-3.2") {
-        "meta-llama/Llama-3.2-3B-Instruct"
-    } else if selected_repo.to_lowercase().contains("qwen") {
-        "Qwen/Qwen2.5-3B-Instruct"
-    } else if selected_repo.to_lowercase().contains("gemma") {
-        "google/gemma-2-2b-it"
-    } else {
-        "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
     };
 
-    info!("Attempting to download tokenizer from base repo: {}", base_repo_name);
-    let base_repo = api.model(base_repo_name.to_string());
-    let tokenizer_path = base_repo.get("tokenizer.json").await?;
+    // 5. Session 2: Taint Analysis & Security Gating
+    info!("Security: Routing scraped data through Principal Checker.");
+    let untrusted_findings = UntrustedValue::new(raw_findings, "web_search".to_string());
 
-    std::fs::copy(&model_path, "model.gguf")
-        .unwrap_or_else(|_| { warn!("Failed to copy model to local dir, using cache directly."); 0 });
-    std::fs::copy(&tokenizer_path, "tokenizer.json")
-        .unwrap_or_else(|_| { warn!("Failed to copy tokenizer to local dir, using cache directly."); 0 });
+    // Policy P-T: Must not contain malware indicators
+    let policy = |data: &String| !data.contains("malware");
+    let trusted_findings = PrincipalChecker::sanitize(untrusted_findings, policy)
+        .map_err(|e| anyhow::anyhow!("Security Exception: {}", e))?;
 
-    info!("Setup complete! The dynamically selected LLM has been installed. You are ready to run `cli research`.");
+    // 6. Memorization
+    info!("Memory: Reifying knowledge into RDF Graph and Episodic Merkle Log.");
+    let safe_data = trusted_findings.into_inner();
+
+    // Hash chain the event
+    let block = episodic_log.append_event(&format!("SCRAPED: {}", safe_data))?;
+    info!("Appended Episodic Block: {}", block.block_hash);
+
+    // Reify to Semantic Store (Subject, Predicate, Object)
+    // URIs must have a scheme (e.g. ex: or http://) for Oxigraph/RDF compliance
+    semantic_db.insert_triplet("http://example.org/startup_finance", "http://example.org/includes_tool", "Brex")?;
+    semantic_db.insert_triplet("http://example.org/startup_finance", "http://example.org/requires_feature", "Runway Calculator")?;
+
+    // 7. Session 7: Multi-Format Synthesis & Design Engine
+    let sparql_query = "SELECT ?s ?p ?o WHERE { ?s ?p ?o }";
+    let retrieved_knowledge = semantic_db.query_sparql(sparql_query)?;
+
+    let json_ld_data = SynthesisEngine::extract_to_jsonld(&retrieved_knowledge)?;
+
+    let dashboard_html = DesignDispatcher::dispatch_design(
+        &json_ld_data,
+        OutputFormat::HtmlTailwindDashboard,
+        "Modern McKinsey Report Style"
+    )?;
+
+    info!("=== OS EXECUTION COMPLETE ===");
+    println!("\n[Final Output HTML Artifact]\n{}", dashboard_html);
+
     Ok(())
 }
