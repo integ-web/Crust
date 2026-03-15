@@ -1,0 +1,15 @@
+[package]
+name = "senses"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chromiumoxide = { version = "0.9.1" }
+futures = "0.3.31"
+fastrand = "2.0.1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
