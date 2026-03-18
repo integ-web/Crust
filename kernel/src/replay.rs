@@ -29,7 +29,7 @@ impl ReplayEngine {
         Fut: std::future::Future<Output = Result<Value>>,
     {
         // 1. Check if the event was already recorded (crash resilience)
-        if let Some(event) = self.log.get_event(tool_name, &arguments)? {
+        if let Some(event) = self.log.get_event(tool_name, &arguments).await? {
             tracing::info!("Replay Engine: Replaying previously executed tool `{}` with args `{:?}`", tool_name, arguments);
             return Ok(event.result);
         }
@@ -39,7 +39,7 @@ impl ReplayEngine {
         let result = actual_execution().await?;
 
         // 3. Record the result for future replays
-        self.log.record_event(tool_name, &arguments, &result)?;
+        self.log.record_event(tool_name, &arguments, &result).await?;
 
         Ok(result)
     }

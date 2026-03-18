@@ -37,14 +37,14 @@ async fn main() -> Result<()> {
     let query = "Personal finance manager for startup founders";
     info!("User Prompt Recieved: '{}'", query);
 
-    // 4. Session 6: Core Orchestration (ORGA)
+    // 4. Session 6: Core Orchestration (ORGA via DAG)
     let mut orga = OrgaCycle::new();
 
     // In a real run, the ORGA cycle triggers `senses` (StealthBrowser) based on its generated sub-tasks.
     // For demonstration of the OS integrating the flow, we will manually perform the pipeline:
 
-    // -> Start the ORGA reasoning cycle
-    orga.run_cycle(query).await?;
+    // -> Start the true DAG-based ORGA reasoning cycle
+    orga.run_dag_cycle(query).await?;
 
     // -> Sense / Scrape (Mocking Adaptive Senses - Session 3)
     info!("Senses: Launching Stealth Browser to research personal finance tools...");

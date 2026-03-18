@@ -11,7 +11,8 @@ pub struct SemanticMemory {
 
 impl SemanticMemory {
     pub fn new() -> Result<Self> {
-        let store = Store::new()?;
+        // Phase 1: Initialize a persistent, disk-backed store for durable ontology graphs
+        let store = Store::open("semantic_db")?;
         Ok(Self { store })
     }
 
