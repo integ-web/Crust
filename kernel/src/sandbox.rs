@@ -29,14 +29,15 @@ impl WasmSandbox {
         // 1. Metering: Set the initial fuel limit
         store.set_fuel(max_fuel)?;
 
-        // 2. Epoch Interruption: Setup a background thread to bump the engine's epoch counter
-        // This is a naive implementation just for the example. In a real OS, a single global timer thread
-        // bumps the engine epoch every ~100ms, and we set `store.set_epoch_deadline(current + X)`
+        // 2. Epoch Interruption: Use Tokio to spawn an asynchronous task instead of leaking an OS thread.
+        // A global timer is preferable, but a non-blocking timeout task per execution is significantly better.
         store.set_epoch_deadline(1);
         let engine_clone = self.engine.clone();
 
-        let _timer_thread = std::thread::spawn(move || {
-            std::thread::sleep(timeout);
+        // Spawn a Tokio task that will sleep without blocking the executor, then bump the epoch.
+        // We use an abort handle to cancel this task if the WASM execution completes before the timeout.
+        let timer_handle = tokio::spawn(async move {
+            tokio::time::sleep(timeout).await;
             engine_clone.increment_epoch();
         });
 
@@ -52,8 +53,15 @@ impl WasmSandbox {
         let run_func = instance.get_typed_func::<(), i32>(&mut store, "run")?;
 
         let result = match run_func.call(&mut store, ()) {
-            Ok(val) => val,
+            Ok(val) => {
+                // Cancel the timeout task since the execution finished successfully.
+                timer_handle.abort();
+                val
+            },
             Err(e) => {
+                // Ensure the timer is still aborted on failure to free resources
+                timer_handle.abort();
+
                 if let Some(_) = e.downcast_ref::<wasmtime::Trap>() {
                     warn!("WASM Execution Trapped! (Likely out of fuel or time deadline exceeded): {}", e);
                 } else {
@@ -71,8 +79,8 @@ impl WasmSandbox {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_fuel_consumption() -> Result<()> {
+    #[tokio::test]
+    async fn test_fuel_consumption() -> Result<()> {
         let sandbox = WasmSandbox::new()?;
 
         // A simple WASM module in WAT format that loops infinitely
@@ -99,8 +107,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_successful_execution() -> Result<()> {
+    #[tokio::test]
+    async fn test_successful_execution() -> Result<()> {
         let sandbox = WasmSandbox::new()?;
 
         // A simple WASM module that just returns 42

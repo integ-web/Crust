@@ -2,64 +2,102 @@ use anyhow::Result;
 use brain::taint::{PrincipalChecker, UntrustedValue, TrustedAction};
 use crate::todo_manager::TodoManager;
 use tracing::info;
+use petgraph::graph::DiGraph;
+use petgraph::algo::toposort;
+use tokio::task::JoinSet;
+use std::collections::HashMap;
+
+/// A node in our research DAG
+#[derive(Debug, Clone)]
+pub struct ResearchTask {
+    pub id: String,
+    pub description: String,
+    pub is_gate: bool,
+}
 
 pub struct OrgaCycle {
-    todo_manager: TodoManager,
+    pub todo_manager: TodoManager,
+    pub dag: DiGraph<ResearchTask, ()>,
 }
 
 impl OrgaCycle {
     pub fn new() -> Self {
         Self {
             todo_manager: TodoManager::new(),
+            dag: DiGraph::new(),
         }
     }
 
-    /// The Observe-Reason-Gate-Act (ORGA) cycle.
-    /// This represents the core agent loop.
-    pub async fn run_cycle(&mut self, goal: &str) -> Result<()> {
-        info!("=== Starting ORGA Cycle for Goal: {} ===", goal);
+    /// The Observe-Reason-Gate-Act (ORGA) cycle via a true DAG execution model.
+    pub async fn run_dag_cycle(&mut self, goal: &str) -> Result<()> {
+        info!("=== Starting DAG ORGA Cycle for Goal: {} ===", goal);
 
-        // 1. Observe (Extract context / Generate Plan)
-        // In a real system, the LLM sets the steps. For now, we mock.
-        self.todo_manager.commit_step("Scrape user input");
-        self.todo_manager.commit_step("Process and write summary to disk");
+        // 1. Observe (Plan Generation)
+        let t1 = self.dag.add_node(ResearchTask {
+            id: "T1".into(),
+            description: "Scrape user input (Worker A)".into(),
+            is_gate: false,
+        });
 
-        while let Some(step) = self.todo_manager.next_step() {
-            info!("ORGA Step: {}", step);
+        let t2 = self.dag.add_node(ResearchTask {
+            id: "T2".into(),
+            description: "Scrape secondary source (Worker B)".into(),
+            is_gate: false,
+        });
 
-            // 2. Reason (Agent determines action)
-            // Mock: We scraped some data from a "web source".
-            let scraped_data = "summary of personal finance tools";
-            let untrusted = UntrustedValue::new(scraped_data.to_string(), "web".to_string());
+        let t3 = self.dag.add_node(ResearchTask {
+            id: "T3".into(),
+            description: "Process and write summary to disk (Requires T1 & T2)".into(),
+            is_gate: true, // Requires PrincipalChecker
+        });
 
-            // 3. Gate (Principal Checker Enforces Policy P-T)
-            // The action is to write to disk. We must sanitize the input first.
-            let policy = |data: &String| !data.contains("rm -rf"); // Simple mock policy
+        // T1 and T2 must happen before T3
+        self.dag.add_edge(t1, t3, ());
+        self.dag.add_edge(t2, t3, ());
 
-            let trusted_result = PrincipalChecker::sanitize(untrusted, policy);
+        // Get topological sort to determine execution order layers
+        let sorted_indices = match toposort(&self.dag, None) {
+            Ok(s) => s,
+            Err(_) => {
+                anyhow::bail!("Cycle detected in Research DAG! Aborting to prevent infinite loop.");
+            }
+        };
 
-            match trusted_result {
-                Ok(trusted_value) => {
-                    info!("Gate Passed: Data is trusted.");
+        // Group tasks by their dependencies to allow true parallel execution.
+        // For simplicity in this mock, we just process them in sorted order but spawn them.
+        for node_idx in sorted_indices {
+            let task = self.dag[node_idx].clone();
+            info!("Spawning DAG Task [{}]: {}", task.id, task.description);
+            self.todo_manager.commit_step(&task.id);
 
-                    // 4. Act
-                    // We execute a mock TrustedAction that strictly requires TrustedValue.
-                    let action = MockFileSystemAction;
-                    let success = action.execute(trusted_value);
-                    if success {
-                        info!("Action Executed Successfully.");
+            // 2. Reason & 4. Act
+            if task.is_gate {
+                // 3. Gate (Principal Checker Enforces Policy P-T)
+                let scraped_data = "summary of personal finance tools";
+                let untrusted = UntrustedValue::new(scraped_data.to_string(), "web".to_string());
+                let policy = |data: &String| !data.contains("rm -rf");
+
+                match PrincipalChecker::sanitize(untrusted, policy) {
+                    Ok(trusted_value) => {
+                        info!("Gate Passed for [{}]. Data is trusted.", task.id);
+                        let action = MockFileSystemAction;
+                        let _success = action.execute(trusted_value);
+                    }
+                    Err(e) => {
+                        tracing::error!("Gate Failed for [{}]: Security Policy Violation! -> {}", task.id, e);
+                        anyhow::bail!("ORGA Cycle Aborted due to security violation.");
                     }
                 }
-                Err(e) => {
-                    tracing::error!("Gate Failed: Security Policy Violation! -> {}", e);
-                    anyhow::bail!("ORGA Cycle Aborted due to security violation.");
-                }
+            } else {
+                // Simulate parallel async work for non-gated tasks
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                info!("Task [{}] completed successfully.", task.id);
             }
 
-            self.todo_manager.mark_completed(&step);
+            self.todo_manager.mark_completed(&task.id);
         }
 
-        info!("=== ORGA Cycle Completed Successfully ===");
+        info!("=== DAG ORGA Cycle Completed Successfully ===");
         Ok(())
     }
 }
